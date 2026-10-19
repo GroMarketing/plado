@@ -1,0 +1,106 @@
+# Daily refresh: fetch the catalog, rescan what changed, rebuild, deploy, keep the snapshots.
+# Triggered by the Cloudflare cron in cron/ (workflow_dispatch). Never put a `schedule:` here:
+# GitHub's scheduler silently drops runs, so the schedule lives on Cloudflare.
+# Secrets: PLADO_GH_PAT = fine-grained, public repositories READ-ONLY (API rate limit only;
+# it is visible to steps that unpack third-party code, so it must never carry write access).
+# CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID = Pages + D1 on Plado's account, deploy step only.
+name: refresh
+on:
+  workflow_dispatch:
+    inputs:
+      installs:
+        description: Also recount installs in real projects (slow, GitHub code search 10/min)
+        type: boolean
+        default: false
+      deploy:
+        description: Deploy the build
+        type: boolean
+        default: true
+concurrency: { group: refresh, cancel-in-progress: false }
+permissions: { contents: write }
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      SITE_URL: https://plado.pages.dev
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Restore caches
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            pipeline/scan/cache
+            site/data/.cache-skills
+            site/data/.cache-trending
+          key: plado-data-${{ github.run_id }}
+          restore-keys: plado-data-
+      - name: Scanner (pinned)
+        run: |
+          python -m venv pipeline/scan/.venv
+          pipeline/scan/.venv/bin/pip install --quiet -r pipeline/scan/requirements.lock
+      - name: Fetch catalog
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        run: node site/data/fetch-catalog.mjs
+      - name: Fetch skills, prompts, rules, subagents
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        run: |
+          node site/data/fetch-skills-prompts.mjs prompts
+          node site/data/fetch-skills-prompts.mjs rules
+          node site/data/fetch-skills-prompts.mjs agents
+          node site/data/fetch-skills-prompts.mjs skills
+      - name: First build (index for trending, installs and the scan)
+        run: node site/build.mjs
+      - name: Trending
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        run: node site/data/fetch-trending.mjs
+      - name: Installs (weekly, Mondays, or on request)
+        if: inputs.installs
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        run: node pipeline/usage/installs.mjs
+      - name: Security scan (cached per commit/version)
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        run: node pipeline/scan/full.mjs --jobs 4
+      - name: Final build
+        run: node site/build.mjs
+      - name: Save caches
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            pipeline/scan/cache
+            site/data/.cache-skills
+            site/data/.cache-trending
+          key: plado-data-${{ github.run_id }}
+      - name: Sanity gate (refuse to replace the live site with a much smaller one)
+        run: |
+          node -e '
+            const fs=require("fs");
+            const n=JSON.parse(fs.readFileSync("site/dist/data/index.json","utf8")).entries.length;
+            fetch("https://plado.pages.dev/data/index.json").then(r=>r.ok?r.json():null).then(j=>{
+              const live=j?.entries?.length||0; console.log(`new ${n} entries, live ${live}`);
+              if (process.env.DRAFTS) { console.error("DRAFTS build, refusing"); process.exit(1); }
+              if (n < 500 || (live && n < live*0.8)) { console.error("catalog shrank too much, refusing to deploy"); process.exit(1); }
+            }).catch(e=>{ console.log("live index unreadable, gate on minimum only", e.message); if (n < 500) process.exit(1); });'
+      - name: Deploy
+        if: inputs.deploy
+        working-directory: site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4.112.0 pages deploy dist --project-name plado --branch main --commit-dirty=true
+      - name: Commit snapshots
+        env: { PUSH_TOKEN: "${{ github.token }}" }
+        run: |
+          git config user.name "Plado"
+          git config user.email "268403919+GroMarketing@users.noreply.github.com"
+          git add site/data/history site/data/installs.json
+          git diff --cached --quiet && exit 0
+          git commit -m "data: snapshot $(date -u +%F) [skip ci]"
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git pull --rebase origin main && git push origin HEAD:main

@@ -1,0 +1,14 @@
+dist/
+data/catalog.json
+data/.cache-skills/
+data/skills.json
+data/prompts.json
+data/rules.json
+data/trending.json
+data/.cache-trending/
+data/agents.json
+.wrangler/
+.dev.vars
+.env.cloudflare
+.wrangler-home/
+data/scan.json

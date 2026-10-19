@@ -1,0 +1,16 @@
+# Cloudflare Pages project for plado.dev (static dist/ + Pages Functions in functions/).
+# One-time setup (free tier): `wrangler d1 create plado`, paste the id below,
+# `wrangler d1 migrations apply plado --remote`, and `wrangler pages secret put SEARCH_SALT`.
+# Local: `wrangler d1 migrations apply plado --local` then `wrangler pages dev`.
+name = "plado"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-07-15"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "plado"
+database_id = "d57f4184-26a4-4cf8-8fae-8166fb511631"
+migrations_dir = "migrations"
+
+[vars]
+TRENDING_MIN_PEOPLE = "3"

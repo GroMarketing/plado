@@ -1,0 +1,14 @@
+# Daily trigger for .github/workflows/refresh.yml (Plado's Cloudflare account).
+# Secret: GH_PAT (fine-grained, this repo only, Actions: read and write).
+name = "plado-refresh-cron"
+main = "src/index.js"
+compatibility_date = "2026-07-15"
+account_id = "9cc7d41a6ff2f2d602c232c038c25cb0"   # Plado's own Cloudflare account, never another login's default
+workers_dev = false
+
+[triggers]
+crons = ["17 9 * * *"]   # 09:17 UTC daily (02:17 PT); off the :00/:30 rush
+
+[vars]
+REPO = "GroMarketing/plado"
+WORKFLOW = "refresh.yml"

@@ -1,0 +1,6 @@
+research/private/
+pipeline/scan/.venv/
+pipeline/scan/work/
+pipeline/scan/cache/
+node_modules/
+.DS_Store
