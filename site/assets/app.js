@@ -13,6 +13,21 @@
     return n;
   };
 
+  // ---------- sponsors (labeled strip, outside main; text only via textContent) ----------
+  const sp = $('[data-sponsors]');
+  if (sp) fetch(BASE + 'api/sponsors').then((r) => (r.ok ? r.json() : { items: [] })).then(({ items, left }) => {
+    const list = $('.sponsor-list', sp);
+    for (const s of items || []) {
+      let u; try { u = new URL(s.url); } catch { continue; }
+      if (u.protocol !== 'https:') continue;
+      list.append(el('li', {}, el('a', { href: u.toString(), rel: 'sponsored noopener', target: '_blank', text: s.name }), s.tagline ? el('span', { class: 'muted', text: ' ' + s.tagline }) : null));
+    }
+    if (list.children.length) sp.hidden = false;
+    const buy = $('[data-sponsor-buy]');
+    if (buy && typeof left === 'number' && left === 0) { buy.hidden = true; $('[data-sold-out]').hidden = false; }
+  }).catch(() => {});
+  if (new URLSearchParams(location.search).get('thanks') && $('[data-thanks]')) $('[data-thanks]').hidden = false;
+
   // ---------- theme toggle (per-viewer convenience; storage may be unavailable) ----------
   const root = document.documentElement;
   try { const t = localStorage.getItem('plado-theme'); if (t) root.dataset.theme = t; } catch {}

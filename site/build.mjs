@@ -96,6 +96,11 @@ const funnel = { found: catalog.entries.length, duplicates: catalog.entries.leng
 const readOpt = (f) => { try { return JSON.parse(fs.readFileSync(path.join(HERE, 'data', f), 'utf8')); } catch { return null; } };
 // security scan (pipeline/scan/full.mjs): facts about what the code does, never a verdict
 const SCAN = readOpt('scan.json');
+// Affiliate programs: render-only, used in exactly three lines (test/affiliate-guard.mjs enforces it).
+const AFF = Object.entries(readOpt('../affiliates.json')?.programs || {}).filter(([, p]) => p.url).map(([key, p]) => ({ key, ...p }));
+const affFor = (e) => AFF.find((p) => p.owners.includes(String(ownerOf(e) || '').toLowerCase()));
+const SPONSOR_LINK = 'https://buy.stripe.com/5kQ7sN9dqaU4diWa6UfMA09';
+const VISITS_30D = Number(process.env.VISITS_30D) || 0;
 const scanOf = (e) => SCAN?.entries?.[e.id] || null;
 const SCAN_LIVE = !!SCAN && SCAN.scanned / SCAN.total >= 0.95; // the preview banner comes down only when nearly everything is scanned
 const FACT_LABEL = { envnet: 'Reads environment variables and sends network requests with them', remote: 'Downloads content and runs it', shell: 'Runs shell commands', eval: 'Runs code it builds while running (eval or exec)', network: 'Makes network requests', env: 'Reads environment variables, where API keys usually live', install: 'Installs system packages', deps: 'Uses dependencies without a pinned version', writes: 'Writes files', hidden: 'Includes scripts in hidden folders' };
@@ -368,6 +373,7 @@ ${SCAN_LIVE ? '' : `<div class="preview" role="note">
 <main id="main">
 ${body}
 </main>
+<aside class="sponsors" data-sponsors hidden aria-label="Sponsors"><div class="wrap"><p class="sponsors-label">Sponsors · <a href="${url('advertise/')}">Advertise here</a></p><ul class="sponsor-list"></ul></div></aside>
 <footer class="site-footer">
   <div class="wrap">
     <div class="cols">
@@ -1058,6 +1064,7 @@ for (const e of E) {
         ${e.type === 'skill' ? `<p class="pin-note">The Claude Code command downloads this skill folder at the pinned commit into <code>.claude/skills/</code>. The Skills CLI (<code>npx skills</code>) works with many agents but can't pin a version, so it installs whatever is current.</p>` : ''}
       </div>
       </div>
+      ${(() => { const a = affFor(e); return a ? `<div class="panel"><h2>Needs an account</h2><p>This works with ${esc(a.needs)}. <a href="${esc(a.url)}" rel="sponsored noopener" target="_blank">Sign up for ${esc(a.name)}</a> <span class="chip">affiliate link</span></p><p class="small muted">Plado may earn a commission if you sign up. It never changes a score or a position.</p></div>` : ''; })()} 
       ${e.use.tasks.length || e.use.industries.length ? `<div class="panel"><h2>Used for</h2><div class="chips">${useChips(e)}</div></div>` : ''}
       ${e.integrations.length ? `<div class="panel"><h2>Tool pages</h2><div class="chips">${e.integrations.filter((t) => integrations.some((g) => g.key === t)).map((t) => `<a class="chip link" href="${url(`integrations/${t}/`)}">${esc(INTEGRATION_LABEL[t])}</a>`).join('')}</div></div>` : ''}
       <div class="panel"><h2>Facts</h2>
@@ -1247,9 +1254,9 @@ write('about/index.html', page({ title: 'About Plado and how it makes money | Pl
   <h1>About Plado</h1>
   <p>Plado is an independent directory of add-ons for AI coding tools. It exists because the good ones are scattered across marketplaces, registries and GitHub lists, and it's hard to tell which are maintained, popular, or what they actually do.</p>
   <h2>How we make money</h2>
-  <p>Right now, we don't. When we do, it will be from:</p>
+  <p>Two ways, both labeled where you see them:</p>
   <ul>
-    <li><strong>Sponsors</strong> in clearly labeled spots, never inside rankings or search results.</li>
+    <li><strong>Sponsors</strong> in a labeled strip at the bottom of the page, never inside rankings or search results. <a href="${url('advertise/')}">Become one</a>.</li>
     <li><strong>Affiliate links</strong> to paid services, labeled on the link. Affiliate status never affects a score or a position.</li>
   </ul>
   <p>We won't sell a better rank, a badge, or a verdict.</p>
@@ -1257,6 +1264,22 @@ write('about/index.html', page({ title: 'About Plado and how it makes money | Pl
   <p>Plado is not affiliated with, endorsed by, or sponsored by Anthropic, OpenAI, Google, Cursor, xAI or GitHub.</p>
   <h2>Open data</h2>
   <p>The full catalog is available as <a href="${url('data/catalog.json')}">JSON</a>.</p>
+</div></div>` }));
+
+write('advertise/index.html', page({ title: 'Sponsor Plado | Plado', description: 'A labeled sponsor spot on every Plado page for $49 a month. Real traffic numbers, no effect on rankings, cancel anytime.', rel: 'advertise/index.html', body: `<div class="wrap"><div class="prose">
+  <h1>Sponsor Plado</h1>
+  <p class="sponsor-thanks" data-thanks hidden><strong>Thanks, you're in.</strong> Your spot goes live about 48 hours after payment. If it doesn't pass the rules below, we'll refund you in full.</p>
+  <p><strong>$49 a month.</strong> Your name, one line and a link in the labeled "Sponsors" strip at the bottom of every page. Up to 4 sponsors at a time. Cancel anytime by replying to your Stripe receipt.</p>
+  <h2>Traffic, honestly</h2>
+  <p>${VISITS_30D ? `About <strong>${VISITS_30D.toLocaleString()}</strong> visits in the last 30 days (Cloudflare Web Analytics; treat it as approximate).` : `Plado is new and its traffic is small.`} Larger AI tool directories list sponsor spots at $400 to $1,500 a month on their own advertise pages. This is priced for what Plado has today.</p>
+  <h2>What a sponsor can't buy</h2>
+  <p>A better rank, a score, a badge or a place in search results. Sponsors never appear inside lists, and the ranking code doesn't know who they are.</p>
+  <h2>What we don't take</h2>
+  <p>Crypto, adult content, gambling, lending, or anything that presents itself as Anthropic, OpenAI, Google, Cursor, xAI, GitHub or Plado. Links must be https and go to a real domain.</p>
+  <h2>How it works</h2>
+  <ol><li>Pay and fill in your name, link and one line (up to 90 characters).</li><li>We check it against the rules above.</li><li>It goes live 48 hours after payment, unless we decline it. If we decline it, or all 4 spots were taken when you paid, you get a full refund.</li></ol>
+  <p data-sponsor-buy><a class="btn" href="${SPONSOR_LINK}" rel="noopener">Become a sponsor, $49/month</a></p>
+  <p data-sold-out hidden><strong>All 4 spots are taken right now.</strong> Check back later.</p>
 </div></div>` }));
 
 // 404

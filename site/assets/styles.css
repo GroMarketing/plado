@@ -505,3 +505,10 @@ td.num { font-family: var(--font-mono); text-align: right; white-space: nowrap; 
 .scan-facts li { padding-left: 14px; border-left: 3px solid var(--border-strong); }
 .scan-facts .scan-where { display: block; margin-top: 2px; overflow-wrap: anywhere; }
 .scan-facts .scan-where a { color: var(--fg-muted); }
+
+/* sponsors: a labeled strip above the footer, never inside lists */
+.sponsors { border-top: 1px solid var(--border); padding: var(--space-4) 0; }
+.sponsors-label { font: 500 0.78rem var(--font-mono); color: var(--fg-muted); margin: 0 0 8px; }
+.sponsor-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 24px; }
+.sponsor-list li { min-width: 0; overflow-wrap: anywhere; }
+.sponsor-list a { font-weight: 700; }

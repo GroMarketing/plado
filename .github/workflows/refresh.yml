@@ -3,7 +3,8 @@
 # GitHub's scheduler silently drops runs, so the schedule lives on Cloudflare.
 # Secrets: PLADO_GH_PAT = fine-grained, public repositories READ-ONLY (API rate limit only;
 # it is visible to steps that unpack third-party code, so it must never carry write access).
-# CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID = Pages + D1 on Plado's account, deploy step only.
+# CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID = Plado's account only: Pages edit, D1 edit, Analytics read.
+# Used by the traffic, deploy and sponsor-review steps, never by steps that touch third-party code.
 name: refresh
 on:
   workflow_dispatch:
@@ -27,6 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
+      - name: Required secrets
+        env: { A: "${{ secrets.PLADO_GH_PAT }}", B: "${{ secrets.CLOUDFLARE_API_TOKEN }}", C: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" }
+        run: '[ -n "$A" ] && [ -n "$B" ] && [ -n "$C" ] || { echo "missing PLADO_GH_PAT, CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID"; exit 1; }'
       - uses: actions/setup-node@v4
         with: { node-version: '24' }
       - uses: actions/setup-python@v5
@@ -45,10 +49,10 @@ jobs:
           python -m venv pipeline/scan/.venv
           pipeline/scan/.venv/bin/pip install --quiet -r pipeline/scan/requirements.lock
       - name: Fetch catalog
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
         run: node site/data/fetch-catalog.mjs
       - name: Fetch skills, prompts, rules, subagents
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
         run: |
           node site/data/fetch-skills-prompts.mjs prompts
           node site/data/fetch-skills-prompts.mjs rules
@@ -57,15 +61,28 @@ jobs:
       - name: First build (index for trending, installs and the scan)
         run: node site/build.mjs
       - name: Trending
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
         run: node site/data/fetch-trending.mjs
       - name: Installs (weekly, Mondays, or on request)
         if: inputs.installs
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
         run: node pipeline/usage/installs.mjs
       - name: Security scan (cached per commit/version)
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
         run: node pipeline/scan/full.mjs --jobs 4
+      - name: Affiliate guard (affiliate data never reaches scoring)
+        run: node site/test/affiliate-guard.mjs
+      - name: Traffic for the advertise page (Cloudflare Web Analytics, last 30 days)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node -e '
+            const d=(n)=>new Date(Date.now()-n*864e5).toISOString().slice(0,10);
+            const q=`{viewer{accounts(filter:{accountTag:"${process.env.CLOUDFLARE_ACCOUNT_ID}"}){rumPageloadEventsAdaptiveGroups(limit:1,filter:{date_geq:"${d(30)}",date_leq:"${d(0)}",requestHost:"plado.pages.dev"}){sum{visits}}}}}`;
+            fetch("https://api.cloudflare.com/client/v4/graphql",{method:"POST",headers:{authorization:"Bearer "+process.env.CLOUDFLARE_API_TOKEN,"content-type":"application/json"},body:JSON.stringify({query:q})})
+              .then(r=>r.json()).then(j=>{const v=j?.data?.viewer?.accounts?.[0]?.rumPageloadEventsAdaptiveGroups?.[0]?.sum?.visits||0; console.log("visits 30d",v); require("fs").appendFileSync(process.env.GITHUB_ENV,`VISITS_30D=${v}\n`);})
+              .catch(e=>console.log("traffic unavailable",e.message));'
       - name: Final build
         run: node site/build.mjs
       - name: Save caches
@@ -86,7 +103,9 @@ jobs:
               const live=j?.entries?.length||0; console.log(`new ${n} entries, live ${live}`);
               if (process.env.DRAFTS) { console.error("DRAFTS build, refusing"); process.exit(1); }
               if (n < 500 || (live && n < live*0.8)) { console.error("catalog shrank too much, refusing to deploy"); process.exit(1); }
-            }).catch(e=>{ console.log("live index unreadable, gate on minimum only", e.message); if (n < 500) process.exit(1); });'
+            }).catch(e=>{ console.log("live index unreadable, gate on minimum only", e.message); if (n < 500) process.exit(1); })
+              .then(()=>{ const files=require("child_process").execSync("find site/dist -type f | wc -l").toString().trim()*1;
+                if (files >= 20000) { console.error(`${files} files, over the Cloudflare Pages limit of 20,000`); process.exit(1); } });'
       - name: Deploy
         if: inputs.deploy
         working-directory: site
@@ -104,3 +123,24 @@ jobs:
           git commit -m "data: snapshot $(date -u +%F) [skip ci]"
           git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git pull --rebase origin main && git push origin HEAD:main
+
+  # A sponsor still inside its 48-hour hold needs a look before it goes live, and a
+  # rejected or sold-out one needs a refund. This job fails (GitHub emails the run's owner)
+  # when either exists. The log is public, so it prints counts only, never names or emails.
+  sponsor-review:
+    needs: refresh
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: New sponsor checkouts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # review: anything still inside its 48-hour hold (so no gap between runs can skip it)
+          # refund: rejected or sold-out rows from the last 3 days (flagged on every run until then)
+          NOW=$(( $(date +%s) * 1000 )); SINCE=$(( NOW - 72*3600*1000 ))
+          OUT=$(npx --yes wrangler@4.112.0 d1 execute plado --remote --json --command "SELECT COALESCE(SUM(status IN ('ok','unpaid') AND live_at > $NOW),0) AS review, COALESCE(SUM(status = 'rejected' AND created_at >= $SINCE),0) AS refund FROM sponsors")
+          node -e 'const r=JSON.parse(process.argv[1])[0].results[0]||{}; const a=r.review||0, b=r.refund||0;
+            console.log(`new sponsors to review: ${a} · need a refund: ${b}`);
+            if (a||b) { console.log("Open Stripe: block one by cancelling its subscription before the 48 hours are up; refund the rejected ones."); process.exit(1); }' "$OUT"

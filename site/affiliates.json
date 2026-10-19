@@ -1,0 +1,8 @@
+{
+  "_note": "Affiliate links, shown only on the matching add-on pages and always labeled. A program with an empty url is not shown. Never read by scoring or ranking (test/affiliate-guard.mjs fails the build if it is used anywhere but the labeled panel).",
+  "programs": {
+    "firecrawl": { "name": "Firecrawl", "needs": "a Firecrawl API key", "owners": ["firecrawl", "mendableai"], "url": "" },
+    "railway": { "name": "Railway", "needs": "a Railway account", "owners": ["railwayapp", "railwayapp-templates"], "url": "" },
+    "vercel": { "name": "Vercel", "needs": "a Vercel account", "owners": ["vercel", "vercel-labs"], "url": "" }
+  }
+}
