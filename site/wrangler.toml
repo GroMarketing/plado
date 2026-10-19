@@ -14,3 +14,4 @@ migrations_dir = "migrations"
 
 [vars]
 TRENDING_MIN_PEOPLE = "3"
+SPONSOR_LINK_ID = "plink_1USM4gReR7HY0JvniLWn8Iy7"   # the Stripe payment link sponsors buy through
