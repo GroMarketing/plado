@@ -26,9 +26,9 @@ python3 -m http.server 4321 -d site/dist
 ```
 
 ## Setup (once)
-- **GitHub secrets:** `PLADO_GH_PAT` (fine-grained, public repositories read-only, used for API
-  rate limits only), `CLOUDFLARE_API_TOKEN` (Pages edit, D1 edit, Account Analytics read) and
-  `CLOUDFLARE_ACCOUNT_ID`. The job stops at once if any is missing.
+- **GitHub secrets:** `CLOUDFLARE_API_TOKEN` (Pages edit, D1 edit, Account Analytics read) and
+  `CLOUDFLARE_ACCOUNT_ID`; the job stops at once if either is missing. Optional: `PLADO_GH_PAT`
+  (fine-grained, public repositories read-only) for a higher GitHub API rate limit.
 - **Cron Worker** (`cron/`): `wrangler deploy`, then `wrangler secret put GH_PAT` (fine-grained,
   this repo only, Actions read and write).
 - **D1:** apply `site/migrations/*.sql` to the `plado` database before the first deploy that

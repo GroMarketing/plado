@@ -1,8 +1,10 @@
 # Daily refresh: fetch the catalog, rescan what changed, rebuild, deploy, keep the snapshots.
 # Triggered by the Cloudflare cron in cron/ (workflow_dispatch). Never put a `schedule:` here:
 # GitHub's scheduler silently drops runs, so the schedule lives on Cloudflare.
-# Secrets: PLADO_GH_PAT = fine-grained, public repositories READ-ONLY (API rate limit only;
-# it is visible to steps that unpack third-party code, so it must never carry write access).
+# The refresh job's own token is READ-ONLY (it is visible to steps that unpack third-party
+# code); only the small snapshots job can write, and it touches nothing third-party.
+# Optional secret: PLADO_GH_PAT = fine-grained, public repositories read-only, for a higher
+# GitHub API rate limit. Without it the job uses its own read-only token.
 # CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID = Plado's account only: Pages edit, D1 edit, Analytics read.
 # Used by the traffic, deploy and sponsor-review steps, never by steps that touch third-party code.
 name: refresh
@@ -18,7 +20,7 @@ on:
         type: boolean
         default: true
 concurrency: { group: refresh, cancel-in-progress: false }
-permissions: { contents: write }
+permissions: { contents: read }
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -29,8 +31,8 @@ jobs:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
       - name: Required secrets
-        env: { A: "${{ secrets.PLADO_GH_PAT }}", B: "${{ secrets.CLOUDFLARE_API_TOKEN }}", C: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" }
-        run: '[ -n "$A" ] && [ -n "$B" ] && [ -n "$C" ] || { echo "missing PLADO_GH_PAT, CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID"; exit 1; }'
+        env: { B: "${{ secrets.CLOUDFLARE_API_TOKEN }}", C: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" }
+        run: '[ -n "$B" ] && [ -n "$C" ] || { echo "missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID"; exit 1; }'
       - uses: actions/setup-node@v4
         with: { node-version: '24' }
       - uses: actions/setup-python@v5
@@ -49,10 +51,10 @@ jobs:
           python -m venv pipeline/scan/.venv
           pipeline/scan/.venv/bin/pip install --quiet -r pipeline/scan/requirements.lock
       - name: Fetch catalog
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
         run: node site/data/fetch-catalog.mjs
       - name: Fetch skills, prompts, rules, subagents
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
         run: |
           node site/data/fetch-skills-prompts.mjs prompts
           node site/data/fetch-skills-prompts.mjs rules
@@ -61,14 +63,14 @@ jobs:
       - name: First build (index for trending, installs and the scan)
         run: node site/build.mjs
       - name: Trending
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
         run: node site/data/fetch-trending.mjs
       - name: Installs (weekly, Mondays, or on request)
         if: inputs.installs
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
         run: node pipeline/usage/installs.mjs
       - name: Security scan (cached per commit/version)
-        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT }}" }
+        env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
         run: node pipeline/scan/full.mjs --jobs 4
       - name: Affiliate guard (affiliate data never reaches scoring)
         run: node site/test/affiliate-guard.mjs
@@ -113,15 +115,32 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@4.112.0 pages deploy dist --project-name plado --branch main --commit-dirty=true
+      - name: Hand the day's snapshots to the snapshots job
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshots
+          path: |
+            site/data/history
+            site/data/installs.json
+          retention-days: 3
+
+  # The only job that can write to the repo. It runs no third-party code: it takes the
+  # snapshot files from the refresh job and commits them.
+  snapshots:
+    needs: refresh
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: snapshots, path: site/data }
       - name: Commit snapshots
-        env: { PUSH_TOKEN: "${{ github.token }}" }
         run: |
           git config user.name "Plado"
           git config user.email "268403919+GroMarketing@users.noreply.github.com"
           git add site/data/history site/data/installs.json
           git diff --cached --quiet && exit 0
           git commit -m "data: snapshot $(date -u +%F) [skip ci]"
-          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git pull --rebase origin main && git push origin HEAD:main
 
   # A sponsor still inside its 48-hour hold needs a look before it goes live, and a
