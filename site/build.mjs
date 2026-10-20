@@ -177,6 +177,20 @@ P.unshift(...O); // originals lead their tool pages; they carry no score (no com
 if (SHOW_DRAFTS) console.log(`DRAFTS=1: including ${O.filter((e) => e.status === 'draft').length} unapproved drafts. Local review only, never deploy this build.`);
 funnel.prompts = readOpt('prompts.json')?.funnel || null;
 funnel.rules = readOpt('rules.json')?.funnel || null;
+// Cloudflare Pages allows 20,000 files per deploy and the skill/subagent catalog grows every day.
+// Keep every entry page within budget by leaving out the lowest-scored skills and subagents;
+// plugins/MCP, prompts and rules are never trimmed. OTHER_FILES covers hubs, assets and data files.
+const PAGE_BUDGET = 19000, OTHER_FILES = 600;
+{
+  const room = PAGE_BUDGET - OTHER_FILES - (E.length - S.length - A.length) - P.length - R.length;
+  const tail = [...S, ...A].sort((a, b) => b.score.total - a.score.total || b.github.stars - a.github.stars);
+  if (tail.length > room) {
+    const drop = new Set(tail.slice(Math.max(0, room)));
+    S = S.filter((e) => !drop.has(e)); A = A.filter((e) => !drop.has(e)); E = E.filter((e) => !drop.has(e));
+    funnel.pageBudgetTrimmed = drop.size;
+    console.log(`page budget: left out the ${drop.size} lowest-scored skills and subagents`);
+  }
+}
 // tool tags across every type, so one page per tool can gather its skills, servers, plugins and prompts
 const TOOL_RE = {
   remotion: /\bremotion\b/i, excel: /\bexcel\b|xlsx/i, nextjs: /next\.?js/i, tailwind: /tailwind/i, wordpress: /wordpress/i,
@@ -1208,7 +1222,7 @@ write('how-we-rank/index.html', page({ title: 'How Plado ranks add-ons | Plado',
     <li><strong>Real install counts.</strong> Where a registry publishes downloads, we will use them in place of forks.</li>
   </ul>
   <h2>Skills</h2>
-  <p>Skills are scored the same way, with one change: a repo's stars and forks are split evenly across all the skills it contains. We find skills in the most-starred repos for skill-related GitHub searches, in Google's Gemini CLI extensions gallery, and in the official Anthropic and Vercel collections. Each is read at a pinned commit. The same gates apply, and at most 10 skills are listed from any one repo (the official collections are exempt).${funnel.skills ? ` This build read ${funnel.skills.skillFiles.toLocaleString()} skill files from ${funnel.skills.reposPassingGates.toLocaleString()} repos and listed ${S.length.toLocaleString()}.` : ''}</p>
+  <p>Skills are scored the same way, with one change: a repo's stars and forks are split evenly across all the skills it contains. We find skills in the most-starred repos for skill-related GitHub searches, in Google's Gemini CLI extensions gallery, and in the official Anthropic and Vercel collections. Each is read at a pinned commit. The same gates apply, and at most 10 skills are listed from any one repo (the official collections are exempt).${funnel.skills ? ` This build read ${funnel.skills.skillFiles.toLocaleString()} skill files from ${funnel.skills.reposPassingGates.toLocaleString()} repos and listed ${S.length.toLocaleString()}.` : ''}${funnel.pageBudgetTrimmed ? ` To stay within our host's 20,000-file limit, this build also left out the ${funnel.pageBudgetTrimmed.toLocaleString()} lowest-scored skills and subagents.` : ''}</p>
   <h2>Prompts</h2>
   <p>Prompts come from prompts.chat, whose prompt text is public domain (CC0). Prompts don't have stars, so they get their own score out of 100:</p>
   <ul>
