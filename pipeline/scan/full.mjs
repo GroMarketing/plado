@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Full scan: every listed add-on, at the exact commit or package version we list, with Cisco
 // skill-scanner (static + behavioral analyzers, offline, no LLM, no API keys: zero tokens).
-//   node pipeline/scan/full.mjs [--jobs 12] [--limit N] [--only skill,agent,...]
+//   node pipeline/scan/full.mjs [--jobs 12] [--limit N] [--minutes N] [--only skill,agent,...]
+//   --minutes N: start no new scans after N minutes; what is left stays pending for the next run
 //   node pipeline/scan/full.mjs --report     # rewrite the outputs from the cache, scan nothing
 //   node pipeline/scan/full.mjs --hosts      # add web addresses to cached scans that predate them (downloads, no scanner)
 // Cache: pipeline/scan/cache/ (one file per commit/version), so reruns only scan what changed.
@@ -26,7 +27,7 @@ const UA = 'PladoBot/0.1 (+https://plado.pages.dev)';
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPORT_ONLY = process.argv.includes('--report');
 const HOSTS_ONLY = process.argv.includes('--hosts');
-const JOBS = Number(arg('--jobs', 12)), LIMIT = Number(arg('--limit', 0)), ONLY = arg('--only', '')?.split(',').filter(Boolean);
+const JOBS = Number(arg('--jobs', 12)), LIMIT = Number(arg('--limit', 0)), MINUTES = Number(arg('--minutes', 0)), ONLY = arg('--only', '')?.split(',').filter(Boolean);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const run = promisify(execFile);
 const MAX_FILES = 300, MAX_BYTES = 512 * 1024;
@@ -159,7 +160,7 @@ async function tree(repo, sha) {
 async function get(url, asBuffer = true) {
   for (let i = 0; i < 5; i++) {
     try {
-      const r = await fetch(url, { headers: { 'User-Agent': UA } });
+      const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(120000) }); // a hung download must not hold up the time budget
       if (r.ok) return asBuffer ? Buffer.from(await r.arrayBuffer()) : r.json();
       if (r.status === 404 || r.status === 410) return null;
       if (r.status === 429 || r.status >= 500) { await sleep(5000 * (i + 1)); continue; }
@@ -255,8 +256,9 @@ const queue = REPORT_ONLY ? [] : LIMIT ? todo.slice(0, LIMIT) : todo;
 const seen = new Set(); const work = queue.filter((u) => !seen.has(u.key) && seen.add(u.key));
 console.log(`${units.length} listed · ${units.filter((u) => u.kind === 'none').length} not scannable · ${units.length - todo.length} cached · ${work.length} to scan with ${JOBS} jobs`);
 let done = 0, fails = 0; const t0 = Date.now();
+const overTime = () => MINUTES > 0 && Date.now() - t0 > MINUTES * 60000;
 async function worker(w) {
-  while (work.length) {
+  while (work.length && !overTime()) {
     const u = work.shift();
     const dir = path.join(TMP, `${w}-${u.key}`), out = dir + '.json';
     fs.mkdirSync(dir, { recursive: true });
@@ -288,6 +290,7 @@ async function worker(w) {
   }
 }
 await Promise.all(Array.from({ length: JOBS }, (_, i) => worker(i)));
+if (work.length) console.log(`time budget (${MINUTES} min) reached: ${work.length} left pending for the next run`);
 fs.rmSync(TMP, { recursive: true, force: true });
 
 // ---------- write outputs from the cache (every listed item, not only this run's) ----------

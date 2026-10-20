@@ -71,7 +71,7 @@ jobs:
         run: node pipeline/usage/installs.mjs
       - name: Security scan (cached per commit/version)
         env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
-        run: node pipeline/scan/full.mjs --jobs 4
+        run: node pipeline/scan/full.mjs --jobs 4 --minutes 120
       - name: Affiliate guard (affiliate data never reaches scoring)
         run: node site/test/affiliate-guard.mjs
       - name: Traffic for the advertise page (Cloudflare Web Analytics, last 30 days)
