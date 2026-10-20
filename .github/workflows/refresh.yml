@@ -108,8 +108,16 @@ jobs:
             }).catch(e=>{ console.log("live index unreadable, gate on minimum only", e.message); if (n < 500) process.exit(1); })
               .then(()=>{ const files=require("child_process").execSync("find site/dist -type f | wc -l").toString().trim()*1;
                 if (files >= 20000) { console.error(`${files} files, over the Cloudflare Pages limit of 20,000`); process.exit(1); } });'
+      - name: Scan coverage gate (hold the deploy while the scan cache catches up)
+        id: coverage
+        run: |
+          node -e '
+            const s=JSON.parse(require("fs").readFileSync("site/data/scan.json","utf8"));
+            const share=s.total ? s.scanned/s.total : 0, pct=Math.round(share*100);
+            if (share >= 0.95) { console.log(`scan coverage ${pct}%`); require("fs").appendFileSync(process.env.GITHUB_OUTPUT, "ok=true\n"); }
+            else console.log(`::notice::scan coverage ${pct}% (${s.scanned}/${s.total}), under 95%: not deploying yet, the next run scans more`);'
       - name: Deploy
-        if: inputs.deploy
+        if: inputs.deploy && steps.coverage.outputs.ok == 'true'
         working-directory: site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
