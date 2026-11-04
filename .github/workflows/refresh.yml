@@ -44,9 +44,17 @@ jobs:
             pipeline/scan/cache
             site/data/.cache-skills
             site/data/.cache-trending
-            site/data/trending.json
           key: plado-data-${{ github.run_id }}
           restore-keys: plado-data-
+      # Yesterday's trending.json, so a failed Trending step still builds the trending page.
+      # Its own cache: adding a path to the cache above would change that cache's version
+      # and orphan the scan cache (it did once, 2026-11-04).
+      - name: Restore last trending
+        uses: actions/cache/restore@v4
+        with:
+          path: site/data/trending.json
+          key: plado-trending-${{ github.run_id }}
+          restore-keys: plado-trending-
       - name: Scanner (pinned)
         run: |
           python -m venv pipeline/scan/.venv
@@ -100,8 +108,13 @@ jobs:
             pipeline/scan/cache
             site/data/.cache-skills
             site/data/.cache-trending
-            site/data/trending.json
           key: plado-data-${{ github.run_id }}
+      - name: Save trending
+        if: always() && hashFiles('site/data/trending.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: site/data/trending.json
+          key: plado-trending-${{ github.run_id }}
       - name: Sanity gate (refuse to replace the live site with a much smaller one)
         run: |
           node -e '
