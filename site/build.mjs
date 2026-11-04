@@ -1330,6 +1330,10 @@ write('_headers', `/*
   Cache-Control: public, max-age=300
 `);
 write('robots.txt', `User-agent: *\nAllow: /\n${SITE_URL ? `Sitemap: ${SITE_URL}/sitemap.xml\n` : ''}`);
+// Google Search Console ownership file (FILE verification). Keep it deployed or verification lapses.
+write('googlebba9e6d225a4bdaf.html', 'google-site-verification: googlebba9e6d225a4bdaf.html');
+// Bing Webmaster ownership file. Same rule.
+write('BingSiteAuth.xml', '<?xml version="1.0"?>\n<users>\n\t<user>54CA5252C6263D450B3E541F24258461</user>\n</users>');
 if (SITE_URL) {
   const pages = ['', 'browse/', 'for/', ...teamGroups.flatMap((g) => [`for/${g.key}/`, ...g.tasks.map((t) => `for/${t.key}/`)]), ...industryGroups.map((g) => `industries/${g.key}/`), ...(hasTrending ? ['trending/'] : []), 'leaderboard/', 'integrations/', 'how-we-rank/', 'about/', ...hubs.map((h) => h.key + '/'), ...integrations.map((g) => `integrations/${g.key}/`), ...skillJobs.map((g) => `skills/${g.key}/`), ...(P.length ? ['prompts/', ...promptGroups.map((g) => `prompts/${g.key}/`)] : []), ...(R.length ? ['rules/cursor/'] : []), ...ALL.map((e) => `e/${e.id}/`)];
   write('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${pages.map((p) => `<url><loc>${esc(SITE_URL + '/' + p)}</loc></url>`).join('\n')}\n</urlset>\n`);
