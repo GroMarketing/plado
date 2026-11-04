@@ -28,6 +28,8 @@ const WINDOWS = { day: 1, week: 7, quarter: 90, year: 365 };
 const MAX_CALLS = Number(process.env.MAX_CALLS) || 550; // ~1 hour of archive calls at the paced rate
 const ARCHIVE_GAP_MS = 6500;                             // stays under 600 calls/hr
 const REFRESH_DAYS = 7;                                  // re-pull a repo's archive series weekly
+const ARCHIVE_MINUTES = Number(process.env.ARCHIVE_MINUTES) || 75; // hard time budget for the archive pass
+const ARCHIVE_GIVE_UP = 5;                               // consecutive failed repos = archive is down, skip it this run
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const readOpt = (f) => { try { return JSON.parse(fs.readFileSync(path.join(HERE, f), 'utf8')); } catch { return null; } };
@@ -81,7 +83,7 @@ async function archive(r) {
   const from = day(NOW - 400 * DAY);
   for (let i = 0; i < 4; i++) {
     let res;
-    try { res = await fetch(`https://api.ossinsight.io/v1/repos/${r}/stargazers/history/?per=day&from=${from}&to=${TODAY}`, { headers: { 'User-Agent': UA } }); } catch { await sleep(5000 * (i + 1)); continue; }
+    try { res = await fetch(`https://api.ossinsight.io/v1/repos/${r}/stargazers/history/?per=day&from=${from}&to=${TODAY}`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) }); } catch { await sleep(5000 * (i + 1)); continue; }
     if (res.status === 429) { log('archive rate limited, waiting 10 min'); await sleep(600000); continue; }
     if (res.status === 404) return { fetchedAt: TODAY, series: [] };
     if (!res.ok) { await sleep(5000 * (i + 1)); continue; }
@@ -94,11 +96,17 @@ async function archive(r) {
 }
 const stale = repos.filter((r) => { const c = cread(r); return !c || (NOW - Date.parse(c.fetchedAt)) / DAY >= REFRESH_DAYS; })
   .sort((a, b) => (cread(a)?.fetchedAt || '').localeCompare(cread(b)?.fetchedAt || '') || known[b] - known[a]);
-let calls = 0;
+// The archive is a free third-party API. When it is down every call burns its full retry
+// ladder (~1 min), which once pushed the whole refresh past its job time limit for two
+// weeks (2026-10-22 to 11-03). So: stop after a run of failures, and never past the budget.
+let calls = 0, failedInARow = 0;
+const archiveDeadline = Date.now() + ARCHIVE_MINUTES * 60000;
 for (const r of stale) {
   if (calls >= MAX_CALLS) break;
+  if (Date.now() > archiveDeadline) { log(`archive time budget (${ARCHIVE_MINUTES} min) used up`); break; }
   const x = await archive(r); calls++;
-  if (x) fs.writeFileSync(cfile(r), JSON.stringify(x));
+  if (x) { fs.writeFileSync(cfile(r), JSON.stringify(x)); failedInARow = 0; }
+  else if (++failedInARow >= ARCHIVE_GIVE_UP) { log(`archive unavailable (${failedInARow} repos failed in a row), skipping it this run; snapshots still work`); break; }
   if (calls % 50 === 0) log(`archive ${calls}/${Math.min(MAX_CALLS, stale.length)} (${stale.length} stale)`);
   await sleep(ARCHIVE_GAP_MS);
 }
@@ -131,7 +139,7 @@ for (const r of repos) {
 // ---------- prompts ----------
 const P = readOpt('prompts.json')?.entries || [];
 let meta = [];
-try { meta = (await (await fetch('https://prompts.chat/prompts.json', { headers: { 'User-Agent': UA } })).json()).prompts || []; } catch { log('prompts.chat unavailable; prompt trending uses stored votes only'); }
+try { meta = (await (await fetch('https://prompts.chat/prompts.json', { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(60000) })).json()).prompts || []; } catch { log('prompts.chat unavailable; prompt trending uses stored votes only'); }
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const byTitle = new Map(meta.map((m) => [norm(m.title), m]));
 for (const e of P) {

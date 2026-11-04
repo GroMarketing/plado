@@ -44,6 +44,7 @@ jobs:
             pipeline/scan/cache
             site/data/.cache-skills
             site/data/.cache-trending
+            site/data/trending.json
           key: plado-data-${{ github.run_id }}
           restore-keys: plado-data-
       - name: Scanner (pinned)
@@ -63,6 +64,10 @@ jobs:
       - name: First build (index for trending, installs and the scan)
         run: node site/build.mjs
       - name: Trending
+        # The site builds without fresh trending data, so a slow or broken trending source
+        # must never cost the day's refresh.
+        timeout-minutes: 120
+        continue-on-error: true
         env: { GH_TOKEN: "${{ secrets.PLADO_GH_PAT || github.token }}" }
         run: node site/data/fetch-trending.mjs
       - name: Installs (weekly, Mondays, or on request)
@@ -95,6 +100,7 @@ jobs:
             pipeline/scan/cache
             site/data/.cache-skills
             site/data/.cache-trending
+            site/data/trending.json
           key: plado-data-${{ github.run_id }}
       - name: Sanity gate (refuse to replace the live site with a much smaller one)
         run: |
